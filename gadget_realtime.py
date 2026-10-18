@@ -34,6 +34,10 @@ CHUNK_SECONDS = 0.05
 MODEL = "gpt-realtime"
 SPEECH_SPEED = 1.15  # 0.25 to 1.5; 1.0 is the model's normal pace
 
+# The AIY Voice HAT's button connector (BCM numbering). Off the Pi, Enter on the keyboard works instead.
+BUTTON_PIN = 23
+BUTTON_LIGHT_PIN = 25
+
 RINGS_BEFORE_ANSWER = 2
 RING_SECONDS = 1.0  # a real phone rings for 2s with 4s gaps, which drags at a party
 RING_GAP_SECONDS = 0.8
@@ -327,12 +331,60 @@ def load_secrets():
             os.environ.setdefault(key.strip(), value.strip().strip("'\""))
 
 
+class Microphone:
+    """Keeps one mic stream open for the whole run and forwards audio to the active call.
+
+    Reopening the mic for every call breaks some setups: a Bluetooth headset on the Pi 4 only
+    delivers audio the first time its mic is opened, and is silent after that.
+    """
+
+    def __init__(self, player: Player):
+        self.player = player
+        self.connection = None  # set while a call is in progress
+        self.stream = sd.InputStream(
+            samplerate=SAMPLE_RATE,
+            channels=1,
+            dtype="float32",
+            blocksize=int(SAMPLE_RATE * CHUNK_SECONDS),
+            callback=self._on_audio,
+        )
+        self.stream.start()
+
+    def _on_audio(self, indata, frames, time_info, status):
+        connection = self.connection
+        if connection is None or self.player.seconds_since_sound() < ECHO_GUARD_SECONDS:
+            return
+        pcm16 = (np.clip(indata[:, 0], -1, 1) * 32767).astype(np.int16)
+        connection.input_audio_buffer.append(audio=base64.b64encode(pcm16.tobytes()).decode())
+
+
+print_lock = threading.Lock()
+
+
+def log(line: str = ""):
+    """Prints whole lines only, so the event thread and the main loop never interleave."""
+    with print_lock:
+        print(line, flush=True)
+
+
+def gpio_device(cls_name: str, *args, **kwargs):
+    """A gpiozero device, or None when not running on a Pi."""
+    try:
+        import gpiozero
+
+        return getattr(gpiozero, cls_name)(*args, **kwargs)
+    except Exception:
+        return None
+
+
 class Button:
-    """The wearer's button. Enter on the keyboard for now; on the Pi, wire a GPIO button to
-    `press()`, e.g. gpiozero's `Button(17).when_pressed = button.press`."""
+    """The wearer's button: the GPIO button on the Pi, plus Enter on the keyboard everywhere."""
 
     def __init__(self):
         self.presses: queue.Queue[None] = queue.Queue()
+        self.gpio = gpio_device("Button", BUTTON_PIN, bounce_time=0.05)
+        if self.gpio:
+            self.gpio.when_pressed = self.press
         threading.Thread(target=self._read_keyboard, daemon=True).start()
 
     def press(self):
@@ -355,6 +407,25 @@ class Button:
             self.press()
 
 
+class ButtonLight:
+    """The light in the button: solid when ready, fast blink while ringing, slow blink on a call."""
+
+    def __init__(self):
+        self.led = gpio_device("LED", BUTTON_LIGHT_PIN)
+
+    def ready(self):
+        if self.led:
+            self.led.on()
+
+    def ringing(self):
+        if self.led:
+            self.led.blink(on_time=0.15, off_time=0.15)
+
+    def on_call(self):
+        if self.led:
+            self.led.blink(on_time=0.8, off_time=0.8)
+
+
 class CallState:
     def __init__(self):
         self.hung_up = threading.Event()
@@ -364,25 +435,24 @@ class CallState:
 def handle_events(connection, caller: Caller, player: Player, state: CallState):
     effect = VoiceEffect(caller)
     for event in connection:
-        if event.type == "response.created":
-            print(f"{caller.name}: ", end="", flush=True)
-        elif event.type == "response.output_audio.delta":
+        if event.type == "response.output_audio.delta":
             player.add(effect(base64.b64decode(event.delta)))
-        elif event.type == "response.output_audio_transcript.delta":
-            print(event.delta, end="", flush=True)
+        # Transcripts are printed whole, once finished: the guest's transcription arrives
+        # asynchronously and would otherwise land in the middle of the caller's streamed line.
+        elif event.type == "response.output_audio_transcript.done":
+            log(f"{caller.name}: {event.transcript.strip()}")
         elif event.type == "input_audio_buffer.speech_started":
             state.guest_spoke_at = time.monotonic()
         elif event.type == "conversation.item.input_audio_transcription.completed":
-            print(f"Guest: {event.transcript.strip()}")
+            log(f"Guest: {event.transcript.strip()}")
         elif event.type == "response.done":
-            print()
             if any(
                 item.type == "function_call" and item.name == "hang_up"
                 for item in event.response.output or []
             ):
                 state.hung_up.set()
         elif event.type == "error":
-            print(f"\n[error] {event.error.message}")
+            log(f"[error] {event.error.message}")
 
 
 def session_config(caller: Caller) -> dict:
@@ -417,8 +487,12 @@ def session_config(caller: Caller) -> dict:
     }
 
 
-def take_call(client: OpenAI, caller: Caller, player: Player, button: Button):
-    print("\n☎  Ring ring...")
+def take_call(
+    client: OpenAI, caller: Caller, player: Player, mic: Microphone, button: Button, light: ButtonLight
+):
+    log()
+    log("☎  Ring ring...")
+    light.ringing()
     player.add(RINGING)
     state = CallState()
 
@@ -429,56 +503,51 @@ def take_call(client: OpenAI, caller: Caller, player: Player, button: Button):
             target=handle_events, args=(connection, caller, player, state), daemon=True
         ).start()
 
-        def on_audio(indata, frames, time_info, status):
-            if player.seconds_since_sound() < ECHO_GUARD_SECONDS:
-                return
-            pcm16 = (np.clip(indata[:, 0], -1, 1) * 32767).astype(np.int16)
-            connection.input_audio_buffer.append(audio=base64.b64encode(pcm16.tobytes()).decode())
-
         player.wait_until_done()
+        light.on_call()
         connection.response.create()  # the caller speaks first
         state.guest_spoke_at = time.monotonic()
         button.clear()
 
-        with sd.InputStream(
-            samplerate=SAMPLE_RATE,
-            channels=1,
-            dtype="float32",
-            blocksize=int(SAMPLE_RATE * CHUNK_SECONDS),
-            callback=on_audio,
-        ):
+        mic.connection = connection
+        try:
             while not state.hung_up.is_set():
                 if button.wait(timeout=0.1):
-                    print("\n(wearer hung up)")
+                    log("(wearer hung up)")
                     player.stop()
                     break
                 if time.monotonic() - state.guest_spoke_at > IDLE_HANGUP_SECONDS:
-                    print("\n(nobody's there)")
+                    log("(nobody's there)")
                     break
             player.wait_until_done()
+        finally:
+            mic.connection = None
 
     if state.hung_up.is_set() and caller.self_destructs:
-        print("💥")
+        log("💥")
         player.add(SELF_DESTRUCT)
     else:
         player.add(HANG_UP_BEEPS)
     player.wait_until_done()
-    print("📴 Call ended.")
+    log("📴 Call ended.")
 
 
 def main():
     load_secrets()
     client = OpenAI()
     player = Player()
+    mic = Microphone(player)
     button = Button()
+    light = ButtonLight()
     last_caller = None
 
-    print("Gadget Phone online. Press the button to make it ring, Ctrl+C to quit.")
+    log("Gadget Phone online. Press the button to make it ring, Ctrl+C to quit.")
     while True:
+        light.ready()
         button.clear()
         button.wait()
         caller = random.choice([c for c in CALLERS if c is not last_caller])
-        take_call(client, caller, player, button)
+        take_call(client, caller, player, mic, button, light)
         last_caller = caller
 
 
