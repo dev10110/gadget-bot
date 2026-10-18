@@ -1,0 +1,8 @@
+# API keys: never commit these
+SECRETS
+*key*.txt
+*.env
+
+.venv/
+__pycache__/
+.DS_Store
