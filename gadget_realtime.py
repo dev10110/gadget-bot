@@ -10,7 +10,6 @@ so there is no separate speech-to-text or text-to-speech step.
 """
 
 import base64
-import itertools
 import os
 import queue
 import socket
@@ -22,6 +21,13 @@ import threading
 import time
 from collections import deque
 from dataclasses import dataclass
+
+from button import Button, ButtonLight
+
+if __name__ == "__main__":
+    # The imports below take about 10 seconds on a Pi at boot, so pulse the light meanwhile.
+    light = ButtonLight()
+    light.loading()
 
 import numpy as np
 import sounddevice as sd
@@ -36,10 +42,6 @@ CHUNK_SECONDS = 0.05
 # The full model follows vocal-delivery directions much better than gpt-realtime-mini.
 MODEL = "gpt-realtime"
 SPEECH_SPEED = 1.15  # 0.25 to 1.5; 1.0 is the model's normal pace
-
-# The AIY Voice HAT's button connector (BCM numbering). Off the Pi, Enter on the keyboard works instead.
-BUTTON_PIN = 23
-BUTTON_LIGHT_PIN = 25
 
 RINGS_BEFORE_ANSWER = 2
 RING_SECONDS = 1.0  # a real phone rings for 2s with 4s gaps, which drags at a party
@@ -399,75 +401,6 @@ def log(line: str = ""):
         print(line, flush=True)
 
 
-def gpio_device(cls_name: str, *args, **kwargs):
-    """A gpiozero device, or None when not running on a Pi."""
-    try:
-        import gpiozero
-
-        return getattr(gpiozero, cls_name)(*args, **kwargs)
-    except Exception:
-        return None
-
-
-class Button:
-    """The wearer's button: the GPIO button on the Pi, plus Enter on the keyboard everywhere."""
-
-    def __init__(self):
-        self.presses: queue.Queue[None] = queue.Queue()
-        self.gpio = gpio_device("Button", BUTTON_PIN, bounce_time=0.05)
-        if self.gpio:
-            self.gpio.when_pressed = self.press
-        threading.Thread(target=self._read_keyboard, daemon=True).start()
-
-    def press(self):
-        self.presses.put(None)
-
-    def wait(self, timeout: float | None = None) -> bool:
-        """True if pressed within `timeout` seconds."""
-        try:
-            self.presses.get(timeout=timeout)
-            return True
-        except queue.Empty:
-            return False
-
-    def clear(self):
-        while not self.presses.empty():
-            self.presses.get_nowait()
-
-    def _read_keyboard(self):
-        for _ in sys.stdin:
-            self.press()
-
-
-class ButtonLight:
-    """The light in the button: solid when ready, fast blink while ringing, slow blink on a call,
-    and three quick blinks then a pause when there's no internet."""
-
-    def __init__(self):
-        self.led = gpio_device("LED", BUTTON_LIGHT_PIN)
-
-    def ready(self):
-        if self.led:
-            self.led.source = None
-            self.led.on()
-
-    def ringing(self):
-        if self.led:
-            self.led.source = None
-            self.led.blink(on_time=0.15, off_time=0.15)
-
-    def on_call(self):
-        if self.led:
-            self.led.source = None
-            self.led.blink(on_time=0.8, off_time=0.8)
-
-    def no_internet(self):
-        if self.led:
-            self.led.off()  # stops any blinking, which would fight the pattern below
-            self.led.source_delay = 0.15
-            self.led.source = itertools.cycle([1, 0] * 3 + [0] * 6)
-
-
 class CallState:
     def __init__(self):
         self.hung_up = threading.Event()
@@ -628,13 +561,12 @@ def wait_until_online(light: ButtonLight):
     log("(back online)")
 
 
-def main():
+def main(light: ButtonLight):
     load_secrets()
     client = OpenAI()
     player = Player()
     mic = Microphone(player)
     button = Button()
-    light = ButtonLight()
     last_caller = None
     earlier_calls: deque[str] = deque(maxlen=EARLIER_CALLS_TO_REMEMBER)
 
@@ -661,6 +593,6 @@ def main():
 
 if __name__ == "__main__":
     try:
-        main()
+        main(light)
     except KeyboardInterrupt:
         print("\nThis message will self-destruct.")

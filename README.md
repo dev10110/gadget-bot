@@ -42,6 +42,7 @@ systemctl --user stop gadget-phone       # before running it by hand or running 
 
 | Button light | Meaning |
 |---|---|
+| Slow pulse, fading in and out | Starting up (about 10 s; presses are ignored) |
 | Solid | Ready: press to ring |
 | Fast blink | Ringing |
 | Slow blink | On a call |
