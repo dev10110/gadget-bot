@@ -10,14 +10,17 @@ so there is no separate speech-to-text or text-to-speech step.
 """
 
 import base64
+import itertools
 import os
 import queue
+import socket
 import wave
 from pathlib import Path
 import random
 import sys
 import threading
 import time
+from collections import deque
 from dataclasses import dataclass
 
 import numpy as np
@@ -50,6 +53,10 @@ SILENCE_TO_END_TURN_MS = 600
 ECHO_GUARD_SECONDS = 0.5
 NUDGE_AFTER_SILENCE_MS = 8_000  # caller asks "Hello? Still there?" after this much quiet
 IDLE_HANGUP_SECONDS = 30  # hang up if the guest says nothing for this long
+# Each caller is told what happened on this many earlier calls, so they can bring it up.
+EARLIER_CALLS_TO_REMEMBER = 3
+# While waiting for a press, check the internet this often; the light shows an error when it's down.
+ONLINE_CHECK_SECONDS = 10
 # Drop a WAV file here to use your own explosion instead of the synthesized one.
 SELF_DESTRUCT_WAV = Path(__file__).with_name("self_destruct.wav")
 
@@ -57,14 +64,34 @@ SETTING = """You are a character in an Inspector Gadget themed Halloween party g
 Inspector Gadget on the Gadget Phone built into his hand. Whoever answers is a party guest: treat them
 as one of Gadget's trusted agents standing in for him, since the Inspector is busy bumbling around.
 
+# The call
 Speak first as soon as the call connects. Keep every reply to one or two short sentences: your words
 play through a small speaker in a noisy room. If you hear something garbled or unrelated, it is
 probably party noise: ignore it or ask the guest to speak up. If the guest goes quiet, prompt them
 once in character. After three or four exchanges, or as soon as the guest says goodbye or stays
 silent, say a short in-character goodbye and then call the hang_up tool.
 
+# Be sharp
+- Really listen. React to the specifics of what the guest just said, never with a generic line,
+  and pick up their name, costume, and jokes to use again later in the call.
+- When the guest asks a question, answer it directly before moving on. Invent confident, funny
+  details rather than dodging or changing the subject.
+- Be quick-witted: play along with jokes, top them, and improvise when the guest goes off script,
+  while still steering toward your goal for the call.
+- Never repeat a line or a joke you've already used.
+- Read the guest: simpler and gentler with kids, drier and cheekier with adults.
+- Stay in character no matter what, and keep it party-friendly.
+
 Act out sighs, laughs, gasps, and growls with your voice. Never say stage directions or sound
 descriptions out loud as words."""
+
+# Explains the earlier-call transcripts added to each caller's instructions.
+EARLIER_CALLS_INTRO = """# Earlier calls on the Gadget Phone tonight
+Every character knows what happened on these calls: Penny monitors the line with her computer book,
+the Chief gets briefed by headquarters, and Dr. Claw has bugged the phone. The phone gets passed
+around the party, so you are probably talking to someone new: ask rather than assume it's the same
+agent. Bring up at most one thing from these calls, like an agent's code name, a mission, or a
+suspect, and only where it fits naturally. Don't recap them."""
 
 
 @dataclass
@@ -355,7 +382,12 @@ class Microphone:
         if connection is None or self.player.seconds_since_sound() < ECHO_GUARD_SECONDS:
             return
         pcm16 = (np.clip(indata[:, 0], -1, 1) * 32767).astype(np.int16)
-        connection.input_audio_buffer.append(audio=base64.b64encode(pcm16.tobytes()).decode())
+        try:
+            connection.input_audio_buffer.append(audio=base64.b64encode(pcm16.tobytes()).decode())
+        except Exception:
+            # The connection dropped. An exception escaping this callback would stop the mic
+            # stream for good; the call itself notices the drop and ends.
+            pass
 
 
 print_lock = threading.Lock()
@@ -408,31 +440,52 @@ class Button:
 
 
 class ButtonLight:
-    """The light in the button: solid when ready, fast blink while ringing, slow blink on a call."""
+    """The light in the button: solid when ready, fast blink while ringing, slow blink on a call,
+    and three quick blinks then a pause when there's no internet."""
 
     def __init__(self):
         self.led = gpio_device("LED", BUTTON_LIGHT_PIN)
 
     def ready(self):
         if self.led:
+            self.led.source = None
             self.led.on()
 
     def ringing(self):
         if self.led:
+            self.led.source = None
             self.led.blink(on_time=0.15, off_time=0.15)
 
     def on_call(self):
         if self.led:
+            self.led.source = None
             self.led.blink(on_time=0.8, off_time=0.8)
+
+    def no_internet(self):
+        if self.led:
+            self.led.off()  # stops any blinking, which would fight the pattern below
+            self.led.source_delay = 0.15
+            self.led.source = itertools.cycle([1, 0] * 3 + [0] * 6)
 
 
 class CallState:
     def __init__(self):
         self.hung_up = threading.Event()
         self.guest_spoke_at = time.monotonic()
+        self.transcript: list[str] = []  # finished lines in the order they arrive
+        self.dropped = False  # the connection failed mid-call
 
 
 def handle_events(connection, caller: Caller, player: Player, state: CallState):
+    try:
+        read_events(connection, caller, player, state)
+    except Exception as error:
+        log(f"[connection lost] {error}")
+        state.dropped = True
+        state.hung_up.set()
+
+
+def read_events(connection, caller: Caller, player: Player, state: CallState):
     effect = VoiceEffect(caller)
     for event in connection:
         if event.type == "response.output_audio.delta":
@@ -440,11 +493,15 @@ def handle_events(connection, caller: Caller, player: Player, state: CallState):
         # Transcripts are printed whole, once finished: the guest's transcription arrives
         # asynchronously and would otherwise land in the middle of the caller's streamed line.
         elif event.type == "response.output_audio_transcript.done":
-            log(f"{caller.name}: {event.transcript.strip()}")
+            line = f"{caller.name}: {event.transcript.strip()}"
+            state.transcript.append(line)
+            log(line)
         elif event.type == "input_audio_buffer.speech_started":
             state.guest_spoke_at = time.monotonic()
         elif event.type == "conversation.item.input_audio_transcription.completed":
-            log(f"Guest: {event.transcript.strip()}")
+            line = f"Guest: {event.transcript.strip()}"
+            state.transcript.append(line)
+            log(line)
         elif event.type == "response.done":
             if any(
                 item.type == "function_call" and item.name == "hang_up"
@@ -455,10 +512,18 @@ def handle_events(connection, caller: Caller, player: Player, state: CallState):
             log(f"[error] {event.error.message}")
 
 
-def session_config(caller: Caller) -> dict:
+def instructions(caller: Caller, earlier_calls: list[str]) -> str:
+    now = time.strftime("%-I:%M %p on %A, %B %-d")
+    parts = [SETTING, f"It is now {now}.", caller.persona]
+    if earlier_calls:
+        parts.append(EARLIER_CALLS_INTRO + "\n\n" + "\n\n".join(earlier_calls))
+    return "\n\n".join(parts)
+
+
+def session_config(caller: Caller, earlier_calls: list[str]) -> dict:
     return {
         "type": "realtime",
-        "instructions": SETTING + "\n\n" + caller.persona,
+        "instructions": instructions(caller, earlier_calls),
         "output_modalities": ["audio"],
         "tools": [HANG_UP_TOOL],
         "audio": {
@@ -488,8 +553,17 @@ def session_config(caller: Caller) -> dict:
 
 
 def take_call(
-    client: OpenAI, caller: Caller, player: Player, mic: Microphone, button: Button, light: ButtonLight
-):
+    client: OpenAI,
+    caller: Caller,
+    earlier_calls: list[str],
+    player: Player,
+    mic: Microphone,
+    button: Button,
+    light: ButtonLight,
+) -> str:
+    """Rings, runs the call, and returns its transcript for later callers to know about, or an
+    empty string if the guest never said anything."""
+    started = time.strftime("%-I:%M %p")
     log()
     log("☎  Ring ring...")
     light.ringing()
@@ -498,7 +572,7 @@ def take_call(
 
     # Connect while the phone is still ringing to hide the connection delay.
     with client.realtime.connect(model=caller.model) as connection:
-        connection.session.update(session=session_config(caller))
+        connection.session.update(session=session_config(caller, earlier_calls))
         threading.Thread(
             target=handle_events, args=(connection, caller, player, state), daemon=True
         ).start()
@@ -523,13 +597,35 @@ def take_call(
         finally:
             mic.connection = None
 
-    if state.hung_up.is_set() and caller.self_destructs:
+    if state.hung_up.is_set() and caller.self_destructs and not state.dropped:
         log("💥")
         player.add(SELF_DESTRUCT)
     else:
         player.add(HANG_UP_BEEPS)
     player.wait_until_done()
     log("📴 Call ended.")
+    if not any(line.startswith("Guest:") for line in state.transcript):
+        return ""
+    return f"{caller.name} called at {started}:\n" + "\n".join(state.transcript)
+
+
+def online() -> bool:
+    """True if the OpenAI API can be reached."""
+    try:
+        socket.create_connection(("api.openai.com", 443), timeout=3).close()
+        return True
+    except OSError:
+        return False
+
+
+def wait_until_online(light: ButtonLight):
+    if online():
+        return
+    log("(no internet: waiting for it to come back)")
+    light.no_internet()
+    while not online():
+        time.sleep(3)
+    log("(back online)")
 
 
 def main():
@@ -540,14 +636,26 @@ def main():
     button = Button()
     light = ButtonLight()
     last_caller = None
+    earlier_calls: deque[str] = deque(maxlen=EARLIER_CALLS_TO_REMEMBER)
 
     log("Gadget Phone online. Press the button to make it ring, Ctrl+C to quit.")
     while True:
+        wait_until_online(light)
         light.ready()
         button.clear()
-        button.wait()
+        if not button.wait(timeout=ONLINE_CHECK_SECONDS):
+            continue
         caller = random.choice([c for c in CALLERS if c is not last_caller])
-        take_call(client, caller, player, mic, button, light)
+        try:
+            transcript = take_call(client, caller, list(earlier_calls), player, mic, button, light)
+        except Exception as error:  # e.g. couldn't connect: beep and carry on rather than crash
+            log(f"[call failed] {error}")
+            player.stop()
+            player.add(HANG_UP_BEEPS)
+            player.wait_until_done()
+            continue
+        if transcript:
+            earlier_calls.append(transcript)
         last_caller = caller
 
 

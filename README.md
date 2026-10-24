@@ -29,6 +29,25 @@ for your terminal in System Settings → Privacy & Security → Microphone.
 
 Check the mic with `python mic_test.py`: a live level meter, then playback.
 
+## Running on the Pi
+
+[gadget-phone.service](gadget-phone.service) starts the phone at boot and restarts it if it
+crashes (install steps are at the top of the file). Useful commands:
+
+```bash
+journalctl --user -u gadget-phone -f     # watch the calls and errors live
+systemctl --user restart gadget-phone    # after a git pull
+systemctl --user stop gadget-phone       # before running it by hand or running mic_test.py
+```
+
+| Button light | Meaning |
+|---|---|
+| Solid | Ready: press to ring |
+| Fast blink | Ringing |
+| Slow blink | On a call |
+| Three quick blinks, pause, repeat | No internet: check the phone hotspot |
+| Off | Not running: check the logs |
+
 ## Picking voices
 
 ```bash
@@ -44,4 +63,6 @@ Everything lives at the top of `gadget_realtime.py`:
 - `CALLERS`: each caller's voice, prompt, speed, and effects (`pitch_semitones`, `grit`, `nasal`).
 - `VAD_THRESHOLD`: raise if callers reply to party noise, lower if they miss the guest.
 - `RINGS_BEFORE_ANSWER`, `RING_SECONDS`, `RING_GAP_SECONDS`: the ring.
+- `EARLIER_CALLS_TO_REMEMBER`: how many recent call transcripts each new caller is told about, so
+  they can bring up an earlier agent's code name or mission. Memory resets when the program restarts.
 - `self_destruct.wav`: drop a 16-bit WAV next to the script to replace the synthesized explosion.

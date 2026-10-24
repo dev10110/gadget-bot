@@ -82,26 +82,8 @@ In the show, Gadget's phone is built into his hand: thumb to his ear, pinky to h
      crashing.
    - Play a short "Gadget Phone online" sound at startup, so you know it's ready without a screen.
    - Optional: drive the status LED (slow blink = connecting to Wi-Fi, solid = ready, fast = error).
-2. Add a systemd service so it starts on boot and restarts if it ever crashes:
-   ```ini
-   # /etc/systemd/system/gadget-phone.service
-   [Unit]
-   Description=Gadget Phone
-   After=network-online.target sound.target
-   Wants=network-online.target
-
-   [Service]
-   User=pi
-   WorkingDirectory=/home/pi/detective-bot
-   EnvironmentFile=/home/pi/detective-bot/SECRETS
-   ExecStart=/home/pi/detective-bot/.venv/bin/python gadget_realtime.py
-   Restart=always
-   RestartSec=3
-
-   [Install]
-   WantedBy=multi-user.target
-   ```
-   `sudo systemctl enable --now gadget-phone`; logs with `journalctl -u gadget-phone -f`.
+2. Done: the systemd user service in [gadget-phone.service](../gadget-phone.service) starts it on
+   boot and restarts it if it crashes. See the README's "Running on the Pi".
 3. Test the real cold start: power bank → Pi, phone hotspot on, wait for the startup sound, press
    the button.
 

@@ -1,0 +1,20 @@
+# Starts the Gadget Phone at boot. It's a user service so it shares the pi user's PipeWire audio;
+# `loginctl enable-linger pi` makes user services start at boot without anyone logging in.
+#
+# Install: cp gadget-phone.service ~/.config/systemd/user/
+#          systemctl --user daemon-reload && systemctl --user enable --now gadget-phone
+# Logs:    journalctl --user -u gadget-phone -f
+
+[Unit]
+Description=Gadget Phone
+Wants=pipewire.service pipewire-pulse.service wireplumber.service
+After=pipewire.service pipewire-pulse.service wireplumber.service
+
+[Service]
+WorkingDirectory=%h/GithubRepos/gadget-bot
+ExecStart=%h/GithubRepos/gadget-bot/.venv/bin/python -u gadget_realtime.py
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=default.target
