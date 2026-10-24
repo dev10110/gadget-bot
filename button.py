@@ -55,21 +55,21 @@ class Button:
 
 
 class ButtonLight:
-    """The light in the button: a slow pulse while loading, solid when ready, fast blink while
-    ringing, slow blink on a call, and three quick blinks then a pause when there's no internet."""
+    """The light in the button: fast blink while starting up or ringing, slow breathing when ready,
+    solid on a call, and three quick blinks then a pause when there's no internet."""
 
     def __init__(self):
-        # PWM so the light can fade in and out for the loading pulse.
+        # PWM so the light can fade in and out when ready.
         self.led = gpio_device("PWMLED", BUTTON_LIGHT_PIN)
 
     def loading(self):
         if self.led:
-            self.led.pulse(fade_in_time=0.7, fade_out_time=0.7)
+            self.led.blink(on_time=0.15, off_time=0.15)
 
     def ready(self):
         if self.led:
             self.led.source = None
-            self.led.on()
+            self.led.pulse(fade_in_time=1.0, fade_out_time=1.0)
 
     def ringing(self):
         if self.led:
@@ -79,7 +79,7 @@ class ButtonLight:
     def on_call(self):
         if self.led:
             self.led.source = None
-            self.led.blink(on_time=0.8, off_time=0.8)
+            self.led.on()
 
     def no_internet(self):
         if self.led:

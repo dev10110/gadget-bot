@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from button import Button, ButtonLight
 
 if __name__ == "__main__":
-    # The imports below take about 10 seconds on a Pi at boot, so pulse the light meanwhile.
+    # The imports below take about 10 seconds on a Pi at boot, so blink the light meanwhile.
     light = ButtonLight()
     light.loading()
 
