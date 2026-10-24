@@ -526,11 +526,11 @@ def take_call(
                 if time.monotonic() - state.guest_spoke_at > IDLE_HANGUP_SECONDS:
                     log("(nobody's there)")
                     break
-            light.busy()  # the goodbye and hang-up sound may still be playing
-            player.wait_until_done()
+            player.wait_until_done()  # let the caller finish their goodbye
         finally:
             mic.connection = None
 
+    light.busy()
     if state.hung_up.is_set() and caller.self_destructs and not state.dropped:
         log("💥")
         player.add(SELF_DESTRUCT)
