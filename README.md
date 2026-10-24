@@ -24,7 +24,7 @@ so it can use the system's GPIO libraries (`gpiozero`, `lgpio`), which don't bui
 
 Press the button (or Enter) to make the phone ring, and again to hang up early. On the Pi the
 button is the AIY Voice HAT's button connector (GPIO 23); its light breathes slowly when ready, blinks
-fast while starting up or ringing, and stays solid during a call. On macOS, allow microphone access
+fast while starting up, ringing, or hanging up, and stays solid during a call. On macOS, allow microphone access
 for your terminal in System Settings → Privacy & Security → Microphone.
 
 Check the mic with `python mic_test.py`: a live level meter, then playback.
@@ -44,7 +44,7 @@ systemctl --user stop gadget-phone       # before running it by hand or running 
 |---|---|
 | Fast blink | Starting up (about 10 s; presses are ignored) |
 | Slow breathing, fading in and out | Ready: press to ring |
-| Fast blink | Ringing |
+| Fast blink | Ringing, or hanging up |
 | Solid | On a call: pressing hangs up |
 | Three quick blinks, pause, repeat | No internet: check the phone hotspot |
 | Off | Not running: check the logs |

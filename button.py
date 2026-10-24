@@ -1,7 +1,7 @@
 """The wearer's button and the light inside it.
 
-Kept apart from gadget_realtime.py, and free of slow imports, so the light can start its loading
-pulse while that program's big libraries load (about 10 seconds on a Pi at boot).
+Kept apart from gadget_realtime.py, and free of slow imports, so the light can start blinking
+while that program's big libraries load (about 10 seconds on a Pi at boot).
 """
 
 import itertools
@@ -55,26 +55,23 @@ class Button:
 
 
 class ButtonLight:
-    """The light in the button: fast blink while starting up or ringing, slow breathing when ready,
-    solid on a call, and three quick blinks then a pause when there's no internet."""
+    """The light in the button: fast blink while starting up, ringing, or hanging up; slow
+    breathing when ready; solid on a call; and three quick blinks then a pause with no internet."""
 
     def __init__(self):
         # PWM so the light can fade in and out when ready.
         self.led = gpio_device("PWMLED", BUTTON_LIGHT_PIN)
 
-    def loading(self):
+    def busy(self):
+        """Starting up, ringing, or hanging up: wait."""
         if self.led:
+            self.led.source = None
             self.led.blink(on_time=0.15, off_time=0.15)
 
     def ready(self):
         if self.led:
             self.led.source = None
             self.led.pulse(fade_in_time=1.0, fade_out_time=1.0)
-
-    def ringing(self):
-        if self.led:
-            self.led.source = None
-            self.led.blink(on_time=0.15, off_time=0.15)
 
     def on_call(self):
         if self.led:

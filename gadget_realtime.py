@@ -27,7 +27,7 @@ from button import Button, ButtonLight
 if __name__ == "__main__":
     # The imports below take about 10 seconds on a Pi at boot, so blink the light meanwhile.
     light = ButtonLight()
-    light.loading()
+    light.busy()
 
 import numpy as np
 import sounddevice as sd
@@ -499,7 +499,7 @@ def take_call(
     started = time.strftime("%-I:%M %p")
     log()
     log("☎  Ring ring...")
-    light.ringing()
+    light.busy()
     player.add(RINGING)
     state = CallState()
 
@@ -526,6 +526,7 @@ def take_call(
                 if time.monotonic() - state.guest_spoke_at > IDLE_HANGUP_SECONDS:
                     log("(nobody's there)")
                     break
+            light.busy()  # the goodbye and hang-up sound may still be playing
             player.wait_until_done()
         finally:
             mic.connection = None
@@ -582,6 +583,7 @@ def main(light: ButtonLight):
             transcript = take_call(client, caller, list(earlier_calls), player, mic, button, light)
         except Exception as error:  # e.g. couldn't connect: beep and carry on rather than crash
             log(f"[call failed] {error}")
+            light.busy()
             player.stop()
             player.add(HANG_UP_BEEPS)
             player.wait_until_done()
