@@ -35,7 +35,7 @@ Check the mic with `python mic_test.py`: a live level meter, then playback.
 crashes (install steps are at the top of the file). Useful commands:
 
 ```bash
-journalctl --user -u gadget-phone -f     # watch the calls and errors live
+journalctl --user-unit gadget-phone -f    # watch the calls and errors live
 systemctl --user restart gadget-phone    # after a git pull
 systemctl --user stop gadget-phone       # before running it by hand or running mic_test.py
 ```

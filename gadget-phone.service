@@ -3,7 +3,7 @@
 #
 # Install: cp gadget-phone.service ~/.config/systemd/user/
 #          systemctl --user daemon-reload && systemctl --user enable --now gadget-phone
-# Logs:    journalctl --user -u gadget-phone -f
+# Logs:    journalctl --user-unit gadget-phone -f
 
 [Unit]
 Description=Gadget Phone
