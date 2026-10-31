@@ -49,6 +49,15 @@ systemctl --user stop gadget-phone       # before running it by hand or running 
 | Three quick blinks, pause, repeat | No internet: check the phone hotspot |
 | Off | Not running: check the logs |
 
+## Volume from your phone
+
+[gadget-volume.service](gadget-volume.service) runs `volume_server.py`, a page with a volume
+slider and a button that plays the ring. Open **http://raspberrypi.local:8080** on any phone on the
+same network as the Pi (the hotspot, at a party). The hostname works even if the hotspot hands the
+Pi a different IP address. Install it the same way as the phone service (steps at the top of its file).
+
+The volume is on the same scale as `wpctl`, capped at 100%, and survives reboots.
+
 ## Picking voices
 
 ```bash
