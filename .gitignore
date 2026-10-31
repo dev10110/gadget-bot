@@ -5,3 +5,6 @@ SECRETS
 .venv/
 __pycache__/
 .DS_Store
+
+# acoustic_test.py cache and recordings
+acoustic_test_clips/

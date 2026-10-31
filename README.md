@@ -28,6 +28,9 @@ fast while starting up, ringing, or hanging up, and stays solid during a call. O
 for your terminal in System Settings → Privacy & Security → Microphone.
 
 Check the mic with `python mic_test.py`: a live level meter, then playback.
+Check the loudness with `python acoustic_test.py`: it plays the ring and each caller through the
+speaker, records them with the mic, and prints how loud each one came out, so you can even them out
+with `TONE_VOLUME` and each caller's `gain_db`.
 
 ## Running on the Pi
 
