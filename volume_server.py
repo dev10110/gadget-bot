@@ -18,7 +18,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 PORT = 8080
 SINK = "@DEFAULT_AUDIO_SINK@"  # the Voice HAT speaker
 SAMPLE_RATE = 24_000
-RING_VOLUME = 0.6  # keep in step with TONE_VOLUME in gadget_realtime.py
+RING_VOLUME = 0.4  # keep in step with TONE_VOLUME in gadget_realtime.py
 
 PAGE = """<!doctype html>
 <html lang="en">

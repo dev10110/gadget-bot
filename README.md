@@ -70,9 +70,11 @@ python voice_sampler.py --caller claw ash cedar  # one caller tried in several v
 
 Everything lives at the top of `gadget_realtime.py`:
 
-- `CALLERS`: each caller's voice, prompt, speed, and effects (`pitch_semitones`, `grit`, `nasal`).
+- `CALLERS`: each caller's voice, prompt, speed, and effects (`pitch_semitones`, `grit`, `nasal`), and
+  `gain_db` to even out their loudness.
 - `VAD_THRESHOLD`: raise if callers reply to party noise, lower if they miss the guest.
 - `RINGS_BEFORE_ANSWER`, `RING_SECONDS`, `RING_GAP_SECONDS`: the ring.
+- `TONE_VOLUME`: loudness of the ring and hang-up beeps (keep `RING_VOLUME` in `volume_server.py` the same).
 - `EARLIER_CALLS_TO_REMEMBER`: how many recent call transcripts each new caller is told about, so
   they can bring up an earlier agent's code name or mission. Memory resets when the program restarts.
 - `self_destruct.wav`: drop a 16-bit WAV next to the script to replace the synthesized explosion.

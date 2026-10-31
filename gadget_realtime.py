@@ -48,7 +48,7 @@ RING_SECONDS = 1.0  # a real phone rings for 2s with 4s gaps, which drags at a p
 RING_GAP_SECONDS = 0.8
 # Loudness of the ring and hang-up beeps. Their low pitch sounds quieter than speech at the same
 # level, so this is higher than you might expect; above 1.0 they would clip.
-TONE_VOLUME = 0.6
+TONE_VOLUME = 0.4
 # Voice detection: raise toward 0.8 if party noise makes callers reply to nobody,
 # lower toward 0.4 if they don't hear the guest.
 VAD_THRESHOLD = 0.6
@@ -112,6 +112,7 @@ class Caller:
     pitch_semitones: float = 0.0
     grit: float = 0.0  # 0 is clean; 2-4 adds a raspy, distorted edge
     nasal: float = 0.0  # dB boost around 1.2 kHz with thinned-out bass; 6-12 sounds honky
+    gain_db: float = 0.0  # louder or quieter, since the API speaks some voices quieter than others
 
 
 CALLERS = [
@@ -186,6 +187,7 @@ steer back to the next step.
         # Pitching up sounds younger but also speeds speech up, hence the slower base speed.
         pitch_semitones=3,
         speed=1.0,
+        gain_db=3,  # coral comes out a few dB quieter than the other callers
     ),
     Caller(
         name="Dr. Claw",
@@ -329,6 +331,7 @@ class VoiceEffect:
         self.step = 2 ** (caller.pitch_semitones / 12)  # input samples consumed per output sample
         self.grit = caller.grit
         self.nasal = caller.nasal
+        self.gain = 10 ** (caller.gain_db / 20)
         self.tail = np.zeros(0)
         self.pos = 0.0
         if self.nasal:
@@ -336,7 +339,7 @@ class VoiceEffect:
             self.filter_state = np.zeros((len(self.sos), 2))
 
     def __call__(self, pcm: bytes) -> bytes:
-        if self.step == 1 and not (self.grit or self.nasal):
+        if self.step == 1 and self.gain == 1 and not (self.grit or self.nasal):
             return pcm
         x = np.concatenate([self.tail, np.frombuffer(pcm, dtype=np.int16) / 32768])
         positions = np.arange(self.pos, len(x) - 1, self.step)
@@ -350,6 +353,7 @@ class VoiceEffect:
             y *= 10 ** (-self.nasal / 40)  # claw back some of the boost's extra loudness
         if self.grit:
             y = np.tanh(self.grit * y) / np.tanh(self.grit)
+        y *= self.gain
         return (np.clip(y, -1, 1) * 32767).astype(np.int16).tobytes()
 
 
