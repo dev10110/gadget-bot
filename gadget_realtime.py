@@ -46,6 +46,9 @@ SPEECH_SPEED = 1.15  # 0.25 to 1.5; 1.0 is the model's normal pace
 RINGS_BEFORE_ANSWER = 2
 RING_SECONDS = 1.0  # a real phone rings for 2s with 4s gaps, which drags at a party
 RING_GAP_SECONDS = 0.8
+# Loudness of the ring and hang-up beeps. Their low pitch sounds quieter than speech at the same
+# level, so this is higher than you might expect; above 1.0 they would clip.
+TONE_VOLUME = 0.6
 # Voice detection: raise toward 0.8 if party noise makes callers reply to nobody,
 # lower toward 0.4 if they don't hear the guest.
 VAD_THRESHOLD = 0.6
@@ -208,7 +211,7 @@ HANG_UP_TOOL = {
 }
 
 
-def tone(freqs: list[float], seconds: float, volume: float = 0.2) -> bytes:
+def tone(freqs: list[float], seconds: float, volume: float = TONE_VOLUME) -> bytes:
     t = np.arange(int(SAMPLE_RATE * seconds)) / SAMPLE_RATE
     wave = sum(np.sin(2 * np.pi * f * t) for f in freqs) / len(freqs)
     return (wave * volume * 32767).astype(np.int16).tobytes()
